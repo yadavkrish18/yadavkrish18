@@ -1,4 +1,3 @@
-<!--START-->
 ```text
         .----.
       .'      '.
@@ -20,7 +19,6 @@
                          • Stars: Live
                          • Followers: Live
 ```
-<!--END-->
 
 <h3 align="center">Engineering Student · Developer · Open Source</h3>
 
