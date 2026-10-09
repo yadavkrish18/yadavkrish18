@@ -1,4 +1,4 @@
-name: Update README stats
+name: Generate profile card
 
 on:
   schedule:
@@ -9,22 +9,41 @@ permissions:
   contents: write
 
 jobs:
-  update:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Update stats in README
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Pillow
+        run: pip install pillow
+
+      - name: Generate profile.svg
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python3 - <<'PY'
-          import json, os, re, urllib.request
+          import json, os, io, html, urllib.request
+          from datetime import datetime
+          from PIL import Image, ImageOps
 
-          USER = "yadavkrish18"
+          # ================= EDIT THESE =================
+          USER      = "yadavkrish18"
+          ROLE      = "Engineering Student"
+          COLLEGE   = "BIT Mesra"
+          LOCATION  = "India"
+          LANGUAGES = "C, C++, Python, JavaScript"
+          EMAIL     = "krishy742@gmail.com"
+          COLS      = 80      # portrait width in characters
+          INVERT    = False   # set True if the portrait looks like a negative
+          # ==============================================
+
           H = {
               "Accept": "application/vnd.github+json",
-              "User-Agent": "readme-updater",
+              "User-Agent": "profile-card",
               "Authorization": "Bearer " + os.environ["GH_TOKEN"],
           }
 
@@ -33,6 +52,7 @@ jobs:
                   return json.load(r)
 
           user = get(f"https://api.github.com/users/{USER}")
+
           stars, page = 0, 1
           while True:
               repos = get(f"https://api.github.com/users/{USER}/repos?per_page=100&page={page}")
@@ -41,16 +61,138 @@ jobs:
               stars += sum(r["stargazers_count"] for r in repos)
               page += 1
 
-          text = open("README.md", encoding="utf-8").read()
-          text = re.sub(r"(Repositories: )\S+", lambda m: m.group(1) + str(user["public_repos"]), text)
-          text = re.sub(r"(Stars: )\S+", lambda m: m.group(1) + str(stars), text)
-          text = re.sub(r"(Followers: )\S+", lambda m: m.group(1) + str(user["followers"]), text)
-          open("README.md", "w", encoding="utf-8").write(text)
+          try:
+              commits = get(f"https://api.github.com/search/commits?q=author:{USER}&per_page=1")["total_count"]
+          except Exception:
+              commits = 0
+
+          # ---------- uptime (account age) ----------
+          c = datetime.strptime(user["created_at"], "%Y-%m-%dT%H:%M:%SZ")
+          n = datetime.utcnow()
+          months = (n.year - c.year) * 12 + n.month - c.month
+          if n.day < c.day:
+              months -= 1
+          years, mo = divmod(months, 12)
+          y = c.year + (c.month - 1 + months) // 12
+          m = (c.month - 1 + months) % 12 + 1
+          try:
+              anchor = c.replace(year=y, month=m)
+          except ValueError:
+              anchor = c.replace(year=y, month=m, day=28)
+          days = max(0, (n - anchor).days)
+          def pl(v, w): return f"{v} {w}" + ("" if v == 1 else "s")
+          uptime = f"{pl(years,'year')}, {pl(mo,'month')}, {pl(days,'day')}"
+
+          # ---------- ASCII portrait ----------
+          if os.path.exists("ascii.txt"):
+              portrait = open("ascii.txt", encoding="utf-8").read().rstrip("\n").split("\n")
+          else:
+              url = user["avatar_url"]
+              url += ("&" if "?" in url else "?") + "s=500"
+              raw = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "profile-card"})).read()
+              img = Image.open(io.BytesIO(raw)).convert("L")
+              img = ImageOps.autocontrast(img, cutoff=2)
+              rows = max(1, int(COLS * img.height / img.width * 0.5))
+              img = img.resize((COLS, rows), Image.LANCZOS)
+              chars = " .:-=+*#%@"
+              if INVERT:
+                  chars = chars[::-1]
+              px_ = img.load()
+              portrait = []
+              for yy in range(rows):
+                  line = "".join(chars[px_[xx, yy] * (len(chars) - 1) // 255] for xx in range(COLS))
+                  portrait.append(line.rstrip())
+
+          # ---------- colors ----------
+          BG, BORDER = "#0d1117", "#30363d"
+          BLUE, ORANGE = "#58a6ff", "#ffa657"
+          WHITE, GRAY, ASCII = "#e6edf3", "#484f58", "#8b949e"
+
+          info = [
+              ("h", f"{USER}@github"),
+              ("r", "Uptime", uptime),
+              ("r", "Location", LOCATION),
+              ("r", "College", COLLEGE),
+              ("r", "Role", ROLE),
+              ("r", "Languages", LANGUAGES),
+              ("gap",),
+              ("h", "Contact"),
+              ("r", "Email", EMAIL),
+              ("r", "GitHub", f"github.com/{USER}"),
+              ("gap",),
+              ("h", "GitHub Stats"),
+              ("p", ("Repos", user["public_repos"]), ("Stars", stars)),
+              ("p", ("Commits", commits), ("Followers", user["followers"])),
+          ]
+
+          CW, FS, LH = 8.4, 14, 22
+          PCW, PFS, PLH = 4.2, 7, 8
+          INFO_W, PAD = 520, 28
+
+          pw = max((len(l) for l in portrait), default=0) * PCW
+          x0 = PAD + pw + 40
+          x1 = x0 + INFO_W
+          W = int(x1 + PAD)
+          info_h = len(info) * LH
+          portrait_h = len(portrait) * PLH
+          HT = int(max(info_h, portrait_h) + 2 * PAD)
+          off = (HT - info_h) / 2
+
+          def t(x, y, s, color, anchor="start", size=FS, weight="normal"):
+              s = html.escape(str(s)).replace(" ", "\u00a0")
+              return (f'<text x="{x:.1f}" y="{y:.1f}" fill="{color}" font-size="{size}" '
+                      f'font-weight="{weight}" text-anchor="{anchor}">{s}</text>')
+
+          def dots(xa, xb, y):
+              if xb - xa < 12:
+                  return ""
+              return (f'<line x1="{xa:.1f}" y1="{y-4:.1f}" x2="{xb:.1f}" y2="{y-4:.1f}" '
+                      f'stroke="{GRAY}" stroke-width="2" stroke-dasharray="0.1 6" stroke-linecap="round"/>')
+
+          def row(xa, xb, y, label, value):
+              num = str(value).isdigit()
+              left = f". {label}:"
+              out = t(xa, y, left, ORANGE)
+              out += t(xb, y, value, BLUE if num else WHITE, "end")
+              out += dots(xa + (len(left) + 1) * CW, xb - (len(str(value)) + 1) * CW, y)
+              return out
+
+          body = []
+          y = off + FS
+          for item in info:
+              k = item[0]
+              if k == "h":
+                  body.append(t(x0, y, item[1], BLUE, weight="bold"))
+                  body.append(f'<line x1="{x0 + len(item[1]) * CW + 10:.1f}" y1="{y-4:.1f}" '
+                              f'x2="{x1:.1f}" y2="{y-4:.1f}" stroke="{BORDER}" stroke-width="1.5"/>')
+              elif k == "r":
+                  body.append(row(x0, x1, y, item[1], item[2]))
+              elif k == "p":
+                  half = (INFO_W - 30) / 2
+                  body.append(row(x0, x0 + half, y, *item[1]))
+                  body.append(t(x0 + half + 15, y, "|", GRAY, "middle"))
+                  body.append(row(x0 + half + 30, x1, y, *item[2]))
+              y += LH
+
+          art = []
+          py = PAD + (HT - 2 * PAD - portrait_h) / 2 + PFS
+          for i, line in enumerate(portrait):
+              if line.strip():
+                  art.append(t(PAD, py + i * PLH, line, ASCII, size=PFS))
+
+          svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{HT}" viewBox="0 0 {W} {HT}">
+          <rect x="0.5" y="0.5" width="{W-1}" height="{HT-1}" rx="10" fill="{BG}" stroke="{BORDER}"/>
+          <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace">
+          {chr(10).join(art)}
+          {chr(10).join(body)}
+          </g>
+          </svg>'''
+          open("profile.svg", "w", encoding="utf-8").write(svg)
           PY
 
       - name: Commit changes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add README.md
-          git diff --quiet --cached || (git commit -m "Update stats" && git push)
+          git add profile.svg
+          git diff --quiet --cached || (git commit -m "Update profile card" && git push)
