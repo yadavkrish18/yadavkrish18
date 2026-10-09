@@ -15,9 +15,9 @@
                          • Email: krishy742@gmail.com
 
                          ── GitHub Stats ──────────────
-                         • Repositories: Live
-                         • Stars: Live
-                         • Followers: Live
+                         • Repositories: 6
+                         • Stars: 1
+                         • Followers: 2
 ```
 
 <h3 align="center">Engineering Student · Developer · Open Source</h3>
